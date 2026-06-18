@@ -252,6 +252,24 @@
     <div class="error hidden" id="errorBox"></div>
   </div>
 
+  <!-- JSON → CSV 変換（文字起こしの有無に関わらず単独で利用可能） -->
+  <div class="card" id="csvCard">
+    <h2 style="font-size:1.05rem;margin:0 0 4px;">📑 JSON → CSV 変換</h2>
+    <div class="meta" style="margin-bottom:12px;">
+      「LLMで整形JSON出力」で得たJSON（1ファイル分の <code>{"inquiries":[…]}</code>／複数まとめ／配列のいずれも可）を貼り付けるか、保存済みのJSONファイルを読み込んでCSVに変換します。Excelでそのまま開けます（UTF-8・BOM付き）。
+    </div>
+    <textarea id="csvJsonInput" spellcheck="false" placeholder='ここにJSONを貼り付けるか、下の「JSONファイルを読み込む」を使用してください。&#10;&#10;例:&#10;{&#10;  "inquiries": [&#10;    { "title": "…", "summary": "…", "category": "…" }&#10;  ]&#10;}' style="min-height:180px; font-family:'Consolas','Menlo',monospace; font-size:0.85rem;"></textarea>
+    <input type="file" id="csvFileInput" accept=".json,application/json" class="hidden">
+    <div class="download-row">
+      <button class="ghost" id="csvLoadFile">📂 JSONファイルを読み込む</button>
+      <button class="ghost hidden" id="csvUseResult">↥ 直近のLLM整形結果を読み込む</button>
+      <button class="ghost" id="csvClear">🗑️ クリア</button>
+      <button class="primary" id="csvConvert">📑 CSVに変換してダウンロード</button>
+    </div>
+    <div class="error hidden" id="csvError" style="margin-top:12px;"></div>
+    <div class="meta" id="csvMsg" style="margin-top:10px;"></div>
+  </div>
+
   <!-- 完了ファイル一覧（複数処理時） -->
   <div class="card hidden" id="resultsListCard">
     <div class="meta" id="resultsSummary"></div>
@@ -261,6 +279,7 @@
       <button class="ghost hidden" id="dlAllSpeaker">🗣️ 全ファイルの全文（話者分離）をまとめてDL(.txt)</button>
       <button class="ghost" id="copyAllPrompt">📝 全ファイルのプロンプトをまとめてコピー</button>
       <button class="primary" id="analyzeAll">🤖 全ファイルをLLM整形(JSON一括DL)</button>
+      <button class="ghost hidden" id="dlBatchCsv">📑 直近のLLM整形結果をCSVでDL</button>
     </div>
     <div class="error hidden" id="batchError" style="margin-top:12px;"></div>
     <div class="meta" id="batchMsg" style="margin-top:10px;"></div>
@@ -297,6 +316,7 @@
       <pre class="json-box hidden" id="jsonBox"></pre>
       <div class="download-row" id="analyzeDownloadRow" style="display:none;">
         <button class="ghost" id="dlJson">📄 JSONをダウンロード(.json)</button>
+        <button class="ghost" id="dlCsv">📑 CSVをダウンロード(.csv)</button>
         <button class="ghost" id="copyJson">📋 JSONをコピー</button>
       </div>
     </div>
@@ -665,7 +685,7 @@
 
   // --- 一括処理（複数ファイル） ---
   const batchError = $('batchError'), batchMsg = $('batchMsg');
-  let batchRunning = false;
+  let batchRunning = false, lastBatchCombined = null;
 
   function setBatchError(msg) {
     if (msg) { batchError.textContent = msg; batchError.classList.remove('hidden'); }
@@ -728,6 +748,8 @@
         }
       }
       download('分析まとめ.json', JSON.stringify(combined, null, 2), 'application/json');
+      lastBatchCombined = combined;
+      $('dlBatchCsv').classList.remove('hidden');
       const ok = total - failures;
       batchMsg.textContent = '整形完了 ' + ok + ' 件'
         + (failures ? ' / 失敗 ' + failures + ' 件（各JSONに error を記録）' : '')
@@ -736,6 +758,16 @@
       setBatchError('一括整形に失敗しました: ' + err.message); batchMsg.textContent = '';
     } finally {
       batchRunning = false; setBatchButtonsDisabled(false);
+    }
+  });
+
+  // 直近の一括LLM整形結果をCSVでまとめてDL（ファイル名列つき）
+  $('dlBatchCsv').addEventListener('click', () => {
+    if (!lastBatchCombined) return;
+    try {
+      download('分析まとめ.csv', inquiriesToCsv(lastBatchCombined), 'text/csv');
+    } catch (e) {
+      setBatchError('CSV変換に失敗しました: ' + e.message);
     }
   });
 
@@ -751,6 +783,7 @@
     jsonBox.classList.add('hidden'); jsonBox.textContent = '';
     analyzeDownloadRow.style.display = 'none';
     lastAnalyzeJson = '';
+    $('csvUseResult').classList.add('hidden');
     analyzeBtn.disabled = false;
     analyzeBtn.textContent = '🤖 LLMで整形JSON出力';
   }
@@ -780,6 +813,7 @@
       jsonBox.textContent = lastAnalyzeJson;
       jsonBox.classList.remove('hidden');
       analyzeDownloadRow.style.display = 'flex';
+      $('csvUseResult').classList.remove('hidden');  // CSV変換カードに取り込めるようにする
     } catch (err) {
       analyzeError.textContent = 'LLM整形に失敗しました: ' + err.message;
       analyzeError.classList.remove('hidden');
@@ -846,6 +880,15 @@
 
   $('dlJson').addEventListener('click', () => {
     if (lastAnalyzeJson) download(baseName() + '_分析.json', lastAnalyzeJson, 'application/json');
+  });
+  $('dlCsv').addEventListener('click', () => {
+    if (!lastAnalyzeJson) return;
+    try {
+      const csv = inquiriesToCsv(JSON.parse(lastAnalyzeJson));
+      download(baseName() + '_分析.csv', csv, 'text/csv');
+    } catch (e) {
+      alert('CSV変換に失敗しました: ' + e.message);
+    }
   });
   $('copyJson').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(lastAnalyzeJson); alert('JSONをコピーしました。'); }
@@ -914,6 +957,127 @@
     } catch (err) {
       setCfgMsg('保存に失敗しました: ' + err.message, false);
     }
+  });
+
+  // --- JSON → CSV 変換 ----------------------------------------------------
+  // LLM整形JSONの1問い合わせ＝CSV1行。配列項目は " / " で連結する。
+  const CSV_COLUMNS = [
+    { key: 'title',           label: 'タイトル' },
+    { key: 'summary',         label: '要約' },
+    { key: 'background',      label: '背景' },
+    { key: 'issue_detail',    label: '問い合わせ内容' },
+    { key: 'actions_taken',   label: '対応内容' },
+    { key: 'result',          label: '対応結果' },
+    { key: 'next_action',     label: '今後の対応' },
+    { key: 'category',        label: 'カテゴリ' },
+    { key: 'subcategory',     label: 'サブカテゴリ' },
+    { key: 'issue_type',      label: '種別' },
+    { key: 'business_impact', label: '業務影響度' },
+    { key: 'resolved',        label: '解決' },
+    { key: 'keywords',        label: 'キーワード' },
+  ];
+
+  // 入力JSONを {file, inquiry} の行配列へ平坦化する。
+  // 受理する形: 配列 / {inquiries:[…]}（単一） / {ファイル名:{inquiries:[…]}}（まとめ） / 各値がエラーの場合も可。
+  function flattenInquiries(data) {
+    const rows = [];
+    const handle = (file, obj) => {
+      if (Array.isArray(obj)) {
+        if (obj.length === 0) rows.push({ file, inquiry: {} });
+        else obj.forEach(inq => rows.push({ file, inquiry: inq || {} }));
+      } else if (obj && Array.isArray(obj.inquiries)) {
+        if (obj.inquiries.length === 0) rows.push({ file, inquiry: {} });
+        else obj.inquiries.forEach(inq => rows.push({ file, inquiry: inq || {} }));
+      } else if (obj && typeof obj === 'object' && obj.error != null) {
+        rows.push({ file, inquiry: { summary: '【整形エラー】' + String(obj.error) } });
+      } else if (obj && typeof obj === 'object') {
+        rows.push({ file, inquiry: obj });
+      }
+    };
+
+    if (Array.isArray(data) || (data && Array.isArray(data.inquiries))) {
+      handle('', data);
+    } else if (data && typeof data === 'object') {
+      Object.keys(data).forEach(k => handle(k, data[k]));
+    } else {
+      throw new Error('対応していないJSON形式です。');
+    }
+    return rows;
+  }
+
+  function csvCellValue(v) {
+    if (v == null) return '';
+    if (Array.isArray(v)) return v.map(csvCellValue).join(' / ');
+    if (typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  }
+  function csvEscape(s) {
+    s = (s == null) ? '' : String(s);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+
+  // パース済みJSON(dict/array)をCSV文字列へ変換する。先頭にBOMを付けExcelで文字化けを防ぐ。
+  function inquiriesToCsv(data) {
+    const rows = flattenInquiries(data);
+    if (!rows.length) throw new Error('CSVに変換できる問い合わせデータが見つかりませんでした。');
+    const hasFile = rows.some(r => r.file);
+    const cols = [];
+    if (hasFile) cols.push({ key: '__file', label: 'ファイル名' });
+    cols.push({ key: '__no', label: 'No' }, ...CSV_COLUMNS);
+
+    const counters = {};
+    const lines = [cols.map(c => csvEscape(c.label)).join(',')];
+    rows.forEach(r => {
+      const fkey = r.file || '';
+      counters[fkey] = (counters[fkey] || 0) + 1;
+      const cells = cols.map(c => {
+        if (c.key === '__file') return csvEscape(r.file || '');
+        if (c.key === '__no') return csvEscape(counters[fkey]);
+        return csvEscape(csvCellValue(r.inquiry ? r.inquiry[c.key] : ''));
+      });
+      lines.push(cells.join(','));
+    });
+    return '﻿' + lines.join('\r\n');
+  }
+
+  // CSV変換カード（文字起こしの有無に関わらず単独で利用可能）
+  const csvJsonInput = $('csvJsonInput'), csvError = $('csvError'), csvMsg = $('csvMsg');
+  function setCsvError(msg) {
+    if (msg) { csvError.textContent = msg; csvError.classList.remove('hidden'); }
+    else { csvError.textContent = ''; csvError.classList.add('hidden'); }
+  }
+  $('csvLoadFile').addEventListener('click', () => $('csvFileInput').click());
+  $('csvFileInput').addEventListener('change', () => {
+    const f = $('csvFileInput').files[0];
+    $('csvFileInput').value = '';
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      csvJsonInput.value = reader.result;
+      setCsvError(''); csvMsg.textContent = '「' + f.name + '」を読み込みました。内容を確認して変換してください。';
+    };
+    reader.onerror = () => setCsvError('ファイルの読み込みに失敗しました。');
+    reader.readAsText(f, 'utf-8');
+  });
+  $('csvUseResult').addEventListener('click', () => {
+    if (!lastAnalyzeJson) { setCsvError('読み込めるLLM整形結果がありません。'); return; }
+    csvJsonInput.value = lastAnalyzeJson;
+    setCsvError(''); csvMsg.textContent = '直近のLLM整形結果を読み込みました。';
+  });
+  $('csvClear').addEventListener('click', () => { csvJsonInput.value = ''; setCsvError(''); csvMsg.textContent = ''; });
+  $('csvConvert').addEventListener('click', () => {
+    setCsvError(''); csvMsg.textContent = '';
+    const text = csvJsonInput.value.trim();
+    if (!text) { setCsvError('JSONが入力されていません。'); return; }
+    let data;
+    try { data = JSON.parse(text); }
+    catch (e) { setCsvError('JSONの解析に失敗しました: ' + e.message); return; }
+    let csv;
+    try { csv = inquiriesToCsv(data); }
+    catch (e) { setCsvError(e.message); return; }
+    download('分析結果.csv', csv, 'text/csv');
+    const lineCount = csv.split('\r\n').length - 1;  // ヘッダー行を除く
+    csvMsg.textContent = lineCount + ' 件をCSVに変換してダウンロードしました。';
   });
 
   function baseName() {
