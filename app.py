@@ -28,6 +28,9 @@ from transcribe_core import (
     transcribe_collect, diarize_into, build_result,
 )
 
+# LLM(Bedrock)による問い合わせ分析。設定の読み書きと分析実行を提供する。
+import llm_analyze
+
 # ---------------------------------------------------------------------------
 # 設定
 # ---------------------------------------------------------------------------
@@ -250,6 +253,121 @@ def progress(job_id):
         with _jobs_lock:
             _jobs.pop(job_id, None)
     return jsonify(payload)
+
+
+# ---------------------------------------------------------------------------
+# LLM(問い合わせ分析) 関連
+# ---------------------------------------------------------------------------
+def _mask_secret(value: str) -> str:
+    """秘密情報を画面表示用にマスクする（末尾4文字のみ残す）。"""
+    if not value:
+        return ""
+    if len(value) <= 4:
+        return "*" * len(value)
+    return "*" * (len(value) - 4) + value[-4:]
+
+
+@app.route("/config", methods=["GET"])
+def get_config():
+    """LLM(Bedrock)設定とカテゴリ一覧を返す。認証情報はマスクして返す。"""
+    cfg = llm_analyze.load_bedrock_config()
+    return jsonify({
+        "bedrock": {
+            # 秘密情報はマスク表示。設定済みかどうかも併せて返す。
+            "aws_access_key": _mask_secret(cfg["aws_access_key"]),
+            "aws_secret_key": _mask_secret(cfg["aws_secret_key"]),
+            "aws_session_token": _mask_secret(cfg["aws_session_token"]),
+            "aws_region": cfg["aws_region"],
+            "model_id": cfg["model_id"],
+            "max_tokens": cfg["max_tokens"],
+            "has_access_key": bool(cfg["aws_access_key"]),
+            "has_secret_key": bool(cfg["aws_secret_key"]),
+            "has_session_token": bool(cfg["aws_session_token"]),
+        },
+        "categories": llm_analyze.load_categories(),
+    })
+
+
+@app.route("/config", methods=["POST"])
+def update_config():
+    """LLM(Bedrock)設定とカテゴリ一覧を保存する。
+
+    認証情報フィールドは「空文字なら変更なし（既存値を維持）」とし、
+    マスク済みの値がそのまま送り返されても上書きしないようにする。
+    """
+    data = request.get_json(silent=True) or {}
+    bedrock_in = data.get("bedrock") or {}
+    current = llm_analyze.load_bedrock_config()
+
+    update = {}
+    # 秘密情報: 空 or マスク文字列(末尾4文字以外が*)の場合は既存値を維持
+    for key in ("aws_access_key", "aws_secret_key", "aws_session_token"):
+        val = bedrock_in.get(key)
+        if val is None:
+            continue
+        val = str(val)
+        if val == "" or set(val[:-4]) == {"*"} and "*" in val:
+            continue  # 未変更とみなす
+        update[key] = val
+    # 非秘密情報はそのまま反映
+    for key in ("aws_region", "model_id", "max_tokens"):
+        if key in bedrock_in and bedrock_in[key] is not None:
+            update[key] = bedrock_in[key]
+
+    saved = llm_analyze.save_bedrock_config({**current, **update})
+    if "categories" in data:
+        saved_categories = llm_analyze.save_categories(data["categories"])
+    else:
+        saved_categories = llm_analyze.load_categories()
+
+    return jsonify({
+        "ok": True,
+        "bedrock": {
+            "aws_access_key": _mask_secret(saved["aws_access_key"]),
+            "aws_secret_key": _mask_secret(saved["aws_secret_key"]),
+            "aws_session_token": _mask_secret(saved["aws_session_token"]),
+            "aws_region": saved["aws_region"],
+            "model_id": saved["model_id"],
+            "max_tokens": saved["max_tokens"],
+            "has_access_key": bool(saved["aws_access_key"]),
+            "has_secret_key": bool(saved["aws_secret_key"]),
+            "has_session_token": bool(saved["aws_session_token"]),
+        },
+        "categories": saved_categories,
+    })
+
+
+@app.route("/prompt", methods=["POST"])
+def build_prompt_endpoint():
+    """文字起こしを差し込んだLLM投入用プロンプト全文を返す。
+
+    利用者が一般的なLLM（ChatGPT等）に自分で貼り付けて使えるように、
+    設定済みのカテゴリ一覧を反映したプロンプト文をそのまま組み立てて返す。
+    AWS認証情報は不要。
+    """
+    data = request.get_json(silent=True) or {}
+    transcript = (data.get("transcript") or "").strip()
+    if not transcript:
+        return jsonify({"error": "文字起こしデータが空です。"}), 400
+    prompt = llm_analyze.build_prompt(transcript)
+    return jsonify({"ok": True, "prompt": prompt})
+
+
+@app.route("/analyze", methods=["POST"])
+def analyze():
+    """話者分離テキスト等の文字起こしをLLMで整形し、JSONを返す。"""
+    data = request.get_json(silent=True) or {}
+    transcript = (data.get("transcript") or "").strip()
+    if not transcript:
+        return jsonify({"error": "文字起こしデータが空です。"}), 400
+    try:
+        result = llm_analyze.analyze_transcript(transcript)
+        return jsonify({"ok": True, "result": result})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:  # noqa: BLE001
+        app.logger.error("LLM分析に失敗: %s\n%s", e, traceback.format_exc())
+        return jsonify({"error": f"LLM分析に失敗しました: {e}"}), 500
 
 
 if __name__ == "__main__":

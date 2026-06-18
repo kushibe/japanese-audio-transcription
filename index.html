@@ -140,12 +140,61 @@
   .download-row { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
   .hidden { display: none; }
   .error { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; padding: 12px; border-radius: 8px; margin-top: 12px; font-size: 0.9rem; }
+
+  /* ヘッダー右上のツールバー */
+  .topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .topbar .titles { flex: 1; }
+
+  /* 設定モーダル */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(15,23,42,0.45);
+    display: none; align-items: flex-start; justify-content: center; z-index: 50;
+    padding: 32px 16px; overflow-y: auto;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--card); border-radius: 12px; width: 100%; max-width: 640px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.2); padding: 24px;
+  }
+  .modal h2 { font-size: 1.15rem; margin: 0 0 4px; }
+  .modal .modal-desc { color: var(--muted); font-size: 0.85rem; margin-bottom: 16px; }
+  .modal .section-title { font-weight: 600; font-size: 0.95rem; margin: 18px 0 10px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .modal .section-title:first-of-type { border-top: none; padding-top: 0; }
+  .form-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+  .form-field label { font-size: 0.82rem; color: var(--muted); }
+  .form-field input, .form-field textarea {
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+    font-size: 0.92rem; font-family: inherit; width: 100%;
+  }
+  .form-field .hint { font-size: 0.76rem; color: #9ca3af; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+  .modal-msg { font-size: 0.85rem; margin-top: 10px; }
+  .modal-msg.ok { color: var(--accent); }
+  .modal-msg.ng { color: #b91c1c; }
+
+  /* LLM整形JSON */
+  .json-box {
+    width: 100%; min-height: 280px; border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; font-size: 0.85rem; font-family: "Consolas","Menlo",monospace;
+    white-space: pre; overflow: auto; background: #0f172a; color: #e2e8f0; line-height: 1.6;
+  }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px; border: 2px solid #cbd5e1;
+    border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite;
+    vertical-align: middle; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>🎙️ 日本語 音声文字起こしツール</h1>
-  <div class="subtitle">ローカル環境で動作（Whisper / faster-whisper ＋ SpeechBrain 話者分離）。音声はこのPC内でのみ処理され、外部に送信されません。</div>
+  <div class="topbar">
+    <div class="titles">
+      <h1>🎙️ 日本語 音声文字起こしツール</h1>
+      <div class="subtitle">ローカル環境で動作（Whisper / faster-whisper ＋ SpeechBrain 話者分離）。音声はこのPC内でのみ処理され、外部に送信されません。</div>
+    </div>
+    <button class="ghost" id="openSettings" title="LLM(Bedrock)設定・カテゴリ編集">⚙️ 設定</button>
+  </div>
 
   <!-- アップロード -->
   <div class="card">
@@ -210,7 +259,11 @@
     <div class="download-row">
       <button class="ghost" id="dlAll">📦 全ファイルの全文をまとめてDL(.txt)</button>
       <button class="ghost hidden" id="dlAllSpeaker">🗣️ 全ファイルの全文（話者分離）をまとめてDL(.txt)</button>
+      <button class="ghost" id="copyAllPrompt">📝 全ファイルのプロンプトをまとめてコピー</button>
+      <button class="primary" id="analyzeAll">🤖 全ファイルをLLM整形(JSON一括DL)</button>
     </div>
+    <div class="error hidden" id="batchError" style="margin-top:12px;"></div>
+    <div class="meta" id="batchMsg" style="margin-top:10px;"></div>
   </div>
 
   <!-- 結果 -->
@@ -233,6 +286,69 @@
       <button class="ghost" id="dlTxt">📄 テキスト(.txt)</button>
       <button class="ghost hidden" id="dlSpeaker">🗣️ 話者分離テキスト(.txt)</button>
       <button class="ghost" id="copyBtn">📋 全文をコピー</button>
+      <button class="ghost" id="copyPromptBtn" title="文字起こしを差し込んだプロンプト全文をコピーします（ChatGPT等に貼り付けて使えます）">📝 LLM投入用プロンプトをコピー</button>
+      <button class="primary" id="analyzeBtn">🤖 LLMで整形JSON出力</button>
+    </div>
+
+    <!-- LLM整形結果 -->
+    <div id="analyzeWrap" class="hidden" style="margin-top:18px;">
+      <div class="meta" id="analyzeMeta">🤖 LLM整形結果（問い合わせ分析JSON）</div>
+      <div class="error hidden" id="analyzeError"></div>
+      <pre class="json-box hidden" id="jsonBox"></pre>
+      <div class="download-row" id="analyzeDownloadRow" style="display:none;">
+        <button class="ghost" id="dlJson">📄 JSONをダウンロード(.json)</button>
+        <button class="ghost" id="copyJson">📋 JSONをコピー</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 設定モーダル -->
+<div class="modal-overlay" id="settingsOverlay">
+  <div class="modal">
+    <h2>⚙️ 設定</h2>
+    <div class="modal-desc">LLM(Amazon Bedrock)の認証情報とプロンプトのカテゴリ一覧を編集します。内容はこのPC内の設定ファイルに保存されます。</div>
+
+    <div class="section-title">Bedrock 認証情報</div>
+    <div class="form-field">
+      <label>AWS Access Key</label>
+      <input type="password" id="cfgAccessKey" placeholder="未設定" autocomplete="off">
+      <span class="hint">空のまま保存すると既存の値を維持します。</span>
+    </div>
+    <div class="form-field">
+      <label>AWS Secret Key</label>
+      <input type="password" id="cfgSecretKey" placeholder="未設定" autocomplete="off">
+      <span class="hint">空のまま保存すると既存の値を維持します。</span>
+    </div>
+    <div class="form-field">
+      <label>AWS Session Token（任意）</label>
+      <input type="password" id="cfgSessionToken" placeholder="未設定" autocomplete="off">
+      <span class="hint">一時認証情報を使う場合のみ入力します。</span>
+    </div>
+    <div class="form-field">
+      <label>AWS Region</label>
+      <input type="text" id="cfgRegion" placeholder="ap-northeast-1">
+    </div>
+    <div class="form-field">
+      <label>モデルID（Bedrock 推論プロファイルID）</label>
+      <input type="text" id="cfgModelId" placeholder="apac.anthropic.claude-sonnet-4-5-20250929-v1:0">
+      <span class="hint">利用するアカウント・リージョンで有効なモデルIDを指定してください。</span>
+    </div>
+    <div class="form-field">
+      <label>最大出力トークン数</label>
+      <input type="number" id="cfgMaxTokens" min="256" max="64000" placeholder="4096">
+    </div>
+
+    <div class="section-title">カテゴリ一覧（プロンプトの「## 9. category」）</div>
+    <div class="form-field">
+      <label>1行に1つ記載します。</label>
+      <textarea id="cfgCategories" rows="12" placeholder="POS&#10;スマデバ&#10;ネットワーク&#10;…"></textarea>
+    </div>
+
+    <div class="modal-msg" id="cfgMsg"></div>
+    <div class="modal-actions">
+      <button class="ghost" id="cfgCancel">キャンセル</button>
+      <button class="primary" id="cfgSave">保存</button>
     </div>
   </div>
 </div>
@@ -514,6 +630,9 @@
     // タブを全文に戻す
     activateTab('text');
     resultCard.classList.remove('hidden');
+
+    // LLM整形結果は結果の切り替え時にリセット
+    resetAnalyze();
   }
 
   // --- タブ切替 ---
@@ -542,6 +661,259 @@
     if (!targets.length) return;
     const parts = targets.map(r => '==== ' + r.filename + ' ====\n' + r.speaker_text + '\n');
     download('全文まとめ_話者分離.txt', parts.join('\n'), 'text/plain');
+  });
+
+  // --- 一括処理（複数ファイル） ---
+  const batchError = $('batchError'), batchMsg = $('batchMsg');
+  let batchRunning = false;
+
+  function setBatchError(msg) {
+    if (msg) { batchError.textContent = msg; batchError.classList.remove('hidden'); }
+    else { batchError.textContent = ''; batchError.classList.add('hidden'); }
+  }
+  function setBatchButtonsDisabled(disabled) {
+    $('copyAllPrompt').disabled = disabled;
+    $('analyzeAll').disabled = disabled;
+  }
+
+  // 全ファイルのプロンプトをまとめてコピー
+  $('copyAllPrompt').addEventListener('click', async () => {
+    if (batchRunning || !allResults.length) return;
+    batchRunning = true; setBatchError(''); setBatchButtonsDisabled(true);
+    const total = allResults.length;
+    const parts = [];
+    let failures = 0;
+    try {
+      for (let i = 0; i < total; i++) {
+        const r = allResults[i];
+        batchMsg.textContent = 'プロンプト生成中… (' + (i + 1) + '/' + total + ') ' + r.filename;
+        const transcript = transcriptOf(r);
+        if (!transcript || !transcript.trim()) { failures++; continue; }
+        try {
+          const prompt = await fetchPrompt(transcript);
+          parts.push('################ ' + r.filename + ' ################\n\n' + prompt);
+        } catch (e) { failures++; }
+      }
+      if (!parts.length) { setBatchError('コピー対象のプロンプトを生成できませんでした。'); batchMsg.textContent = ''; return; }
+      await navigator.clipboard.writeText(parts.join('\n\n\n'));
+      batchMsg.textContent = parts.length + ' ファイル分のプロンプトをコピーしました'
+        + (failures ? '（' + failures + ' 件はスキップ）' : '') + '。';
+    } catch (err) {
+      setBatchError('一括コピーに失敗しました: ' + err.message); batchMsg.textContent = '';
+    } finally {
+      batchRunning = false; setBatchButtonsDisabled(false);
+    }
+  });
+
+  // 全ファイルをLLM整形し、ファイル名をキーにした1つのJSONでまとめてDL
+  $('analyzeAll').addEventListener('click', async () => {
+    if (batchRunning || !allResults.length) return;
+    batchRunning = true; setBatchError(''); setBatchButtonsDisabled(true);
+    const total = allResults.length;
+    const combined = {};
+    let failures = 0;
+    try {
+      for (let i = 0; i < total; i++) {
+        const r = allResults[i];
+        batchMsg.textContent = 'LLM整形中… (' + (i + 1) + '/' + total + ') ' + r.filename;
+        const transcript = transcriptOf(r);
+        const key = uniqueKey(combined, r.filename);
+        if (!transcript || !transcript.trim()) {
+          combined[key] = { error: '整形対象の文字起こしがありません。' }; failures++; continue;
+        }
+        try {
+          combined[key] = await fetchAnalyze(transcript);
+        } catch (e) {
+          combined[key] = { error: String(e.message || e) }; failures++;
+        }
+      }
+      download('分析まとめ.json', JSON.stringify(combined, null, 2), 'application/json');
+      const ok = total - failures;
+      batchMsg.textContent = '整形完了 ' + ok + ' 件'
+        + (failures ? ' / 失敗 ' + failures + ' 件（各JSONに error を記録）' : '')
+        + '。JSONをダウンロードしました。';
+    } catch (err) {
+      setBatchError('一括整形に失敗しました: ' + err.message); batchMsg.textContent = '';
+    } finally {
+      batchRunning = false; setBatchButtonsDisabled(false);
+    }
+  });
+
+  // --- LLMで整形JSON出力 ---
+  const analyzeWrap = $('analyzeWrap'), analyzeError = $('analyzeError');
+  const jsonBox = $('jsonBox'), analyzeDownloadRow = $('analyzeDownloadRow');
+  const analyzeBtn = $('analyzeBtn');
+  let lastAnalyzeJson = '';
+
+  function resetAnalyze() {
+    analyzeWrap.classList.add('hidden');
+    analyzeError.classList.add('hidden'); analyzeError.textContent = '';
+    jsonBox.classList.add('hidden'); jsonBox.textContent = '';
+    analyzeDownloadRow.style.display = 'none';
+    lastAnalyzeJson = '';
+    analyzeBtn.disabled = false;
+    analyzeBtn.textContent = '🤖 LLMで整形JSON出力';
+  }
+
+  analyzeBtn.addEventListener('click', async () => {
+    if (!lastResult) return;
+    // 話者分離された文字起こしを優先し、無ければ全文を使う
+    const transcript = (lastResult.diarized && lastResult.speaker_text)
+      ? lastResult.speaker_text : lastResult.text;
+    if (!transcript || !transcript.trim()) {
+      analyzeWrap.classList.remove('hidden');
+      analyzeError.textContent = '整形対象の文字起こしがありません。';
+      analyzeError.classList.remove('hidden');
+      return;
+    }
+
+    analyzeWrap.classList.remove('hidden');
+    analyzeError.classList.add('hidden');
+    jsonBox.classList.add('hidden');
+    analyzeDownloadRow.style.display = 'none';
+    analyzeBtn.disabled = true;
+    analyzeBtn.innerHTML = '<span class="spinner"></span>整形中…';
+
+    try {
+      const result = await fetchAnalyze(transcript);
+      lastAnalyzeJson = JSON.stringify(result, null, 2);
+      jsonBox.textContent = lastAnalyzeJson;
+      jsonBox.classList.remove('hidden');
+      analyzeDownloadRow.style.display = 'flex';
+    } catch (err) {
+      analyzeError.textContent = 'LLM整形に失敗しました: ' + err.message;
+      analyzeError.classList.remove('hidden');
+    } finally {
+      analyzeBtn.disabled = false;
+      analyzeBtn.textContent = '🤖 LLMで整形JSON出力';
+    }
+  });
+
+  // 結果から「LLMへ渡す文字起こし」を取り出す（話者分離テキストを優先）
+  function transcriptOf(r) {
+    if (!r) return '';
+    return (r.diarized && r.speaker_text) ? r.speaker_text : (r.text || '');
+  }
+  function currentTranscript() { return transcriptOf(lastResult); }
+
+  // サーバへプロンプト全文を組み立ててもらう
+  async function fetchPrompt(transcript) {
+    const res = await fetch('/prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transcript }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || ('HTTP ' + res.status));
+    return d.prompt;
+  }
+  // サーバでLLM整形を実行しJSON(dict)を得る
+  async function fetchAnalyze(transcript) {
+    const res = await fetch('/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transcript }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || ('HTTP ' + res.status));
+    return d.result;
+  }
+  // 同名ファイルが複数ある場合にキー重複を避ける
+  function uniqueKey(obj, name) {
+    if (!(name in obj)) return name;
+    let i = 2;
+    while ((name + ' (' + i + ')') in obj) i++;
+    return name + ' (' + i + ')';
+  }
+
+  // --- LLM投入用プロンプトをコピー（利用者が自分でLLMへ貼り付けて使える） ---
+  $('copyPromptBtn').addEventListener('click', async () => {
+    const transcript = currentTranscript();
+    if (!transcript || !transcript.trim()) { alert('対象の文字起こしがありません。'); return; }
+    const btn = $('copyPromptBtn');
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '生成中…';
+    try {
+      const prompt = await fetchPrompt(transcript);
+      await navigator.clipboard.writeText(prompt);
+      alert('LLM投入用プロンプトをコピーしました。\nChatGPT等に貼り付けてご利用ください。');
+    } catch (err) {
+      alert('プロンプトのコピーに失敗しました: ' + err.message);
+    } finally {
+      btn.disabled = false; btn.textContent = orig;
+    }
+  });
+
+  $('dlJson').addEventListener('click', () => {
+    if (lastAnalyzeJson) download(baseName() + '_分析.json', lastAnalyzeJson, 'application/json');
+  });
+  $('copyJson').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(lastAnalyzeJson); alert('JSONをコピーしました。'); }
+    catch { alert('コピーに失敗しました。'); }
+  });
+
+  // --- 設定モーダル（Bedrock認証情報・カテゴリ編集） ---
+  const settingsOverlay = $('settingsOverlay'), cfgMsg = $('cfgMsg');
+
+  function setCfgMsg(text, ok) {
+    cfgMsg.textContent = text || '';
+    cfgMsg.className = 'modal-msg ' + (text ? (ok ? 'ok' : 'ng') : '');
+  }
+
+  async function openSettings() {
+    setCfgMsg('');
+    try {
+      const res = await fetch('/config');
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || ('HTTP ' + res.status));
+      const b = d.bedrock || {};
+      // 認証情報はマスク値を placeholder に出し、入力欄は空（＝未変更）にする
+      $('cfgAccessKey').value = ''; $('cfgAccessKey').placeholder = b.has_access_key ? (b.aws_access_key || '設定済み') : '未設定';
+      $('cfgSecretKey').value = ''; $('cfgSecretKey').placeholder = b.has_secret_key ? (b.aws_secret_key || '設定済み') : '未設定';
+      $('cfgSessionToken').value = ''; $('cfgSessionToken').placeholder = b.has_session_token ? (b.aws_session_token || '設定済み') : '未設定';
+      $('cfgRegion').value = b.aws_region || '';
+      $('cfgModelId').value = b.model_id || '';
+      $('cfgMaxTokens').value = b.max_tokens || 4096;
+      $('cfgCategories').value = (d.categories || []).join('\n');
+      settingsOverlay.classList.add('show');
+    } catch (err) {
+      alert('設定の読み込みに失敗しました: ' + err.message);
+    }
+  }
+
+  function closeSettings() { settingsOverlay.classList.remove('show'); }
+
+  $('openSettings').addEventListener('click', openSettings);
+  $('cfgCancel').addEventListener('click', closeSettings);
+  settingsOverlay.addEventListener('click', e => { if (e.target === settingsOverlay) closeSettings(); });
+
+  $('cfgSave').addEventListener('click', async () => {
+    setCfgMsg('保存中…', true);
+    const payload = {
+      bedrock: {
+        // 入力欄が空の認証情報はサーバ側で「未変更」として扱われる
+        aws_access_key: $('cfgAccessKey').value,
+        aws_secret_key: $('cfgSecretKey').value,
+        aws_session_token: $('cfgSessionToken').value,
+        aws_region: $('cfgRegion').value.trim(),
+        model_id: $('cfgModelId').value.trim(),
+        max_tokens: parseInt($('cfgMaxTokens').value, 10) || 4096,
+      },
+      categories: $('cfgCategories').value,
+    };
+    try {
+      const res = await fetch('/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || ('HTTP ' + res.status));
+      setCfgMsg('保存しました。', true);
+      setTimeout(closeSettings, 700);
+    } catch (err) {
+      setCfgMsg('保存に失敗しました: ' + err.message, false);
+    }
   });
 
   function baseName() {

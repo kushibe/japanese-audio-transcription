@@ -10,6 +10,9 @@ models/
 # Claude Code などのローカル設定
 .claude/
 
+# LLM(Bedrock)設定（AWS認証情報を含むため公開しない）
+config/
+
 # 音声・出力ファイル（個人情報を含む可能性があるため公開しない）
 *.wav
 *.srt

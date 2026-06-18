@@ -12,15 +12,21 @@ transcribe_core を利用するため、認識結果は GUI と同一。
     python cli.py --diarize                # 話者分離つき
     python cli.py -i 録音 -o 結果 --model medium
     python cli.py --recursive              # サブフォルダも対象にする
+    python cli.py --diarize --analyze      # 話者分離 + LLM(Bedrock)で整形JSON出力
 
 出力（入力ファイル名を基準にする）:
     <name>.txt          … 全文テキスト
     <name>.srt          … 字幕(タイムスタンプ付き)
     <name>.speakers.txt … 話者別テキスト（--diarize 指定時のみ）
+    <name>.analysis.json… LLM整形済みの問い合わせ分析JSON（--analyze 指定時のみ）
+
+--analyze を使う場合は事前に config/bedrock_config.json へAWS認証情報・モデルIDを
+設定しておくこと（GUI版の「⚙️ 設定」画面からも編集できる）。
 """
 import os
 import sys
 import time
+import json
 import argparse
 
 import transcribe_core as core
@@ -142,6 +148,22 @@ def _write_outputs(result, out_dir, stem, write_srt=True):
     return written
 
 
+def _analyze_one(result, out_dir, stem):
+    """文字起こし結果をLLM(Bedrock)で整形し、<name>.analysis.json を書き出す。
+
+    話者分離テキストがあればそれを、無ければ全文を入力に使う。
+    書き出したパスを返す。
+    """
+    import llm_analyze
+
+    transcript = result.get("speaker_text") or result.get("text") or ""
+    data = llm_analyze.analyze_transcript(transcript)
+    out_path = os.path.join(out_dir, stem + ".analysis.json")
+    with open(out_path, "w", encoding="utf-8") as fp:
+        json.dump(data, fp, ensure_ascii=False, indent=2)
+    return out_path
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="所定フォルダ内の .wav をまとめて文字起こしする CLI モード。",
@@ -163,7 +185,19 @@ def main(argv=None):
                         help="既に出力が存在する場合も上書きする（既定はスキップ）")
     parser.add_argument("--no-srt", action="store_true",
                         help="字幕(.srt)を出力しない")
+    parser.add_argument("--analyze", action="store_true",
+                        help="LLM(Bedrock)で問い合わせ分析JSON(.analysis.json)を出力する")
     args = parser.parse_args(argv)
+
+    # --analyze 利用時は設定とライブラリの存在を起動時に確認する
+    if args.analyze:
+        import llm_analyze
+        cfg = llm_analyze.load_bedrock_config()
+        if not cfg.get("aws_access_key") or not cfg.get("aws_secret_key"):
+            print("[エラー] --analyze にはAWS認証情報が必要です。")
+            print(f"        {llm_analyze.BEDROCK_CONFIG_PATH} を設定するか、")
+            print("        GUI版(app.py)の「⚙️ 設定」画面から入力してください。")
+            return 2
 
     # 相対パスは実行場所ではなくスクリプト基準で解決し、bat 起動でも迷わないようにする。
     input_dir = args.input if os.path.isabs(args.input) else os.path.join(BASE_DIR, args.input)
@@ -194,9 +228,12 @@ def main(argv=None):
         stem = os.path.splitext(os.path.basename(path))[0]
         print(f"[{idx}/{len(wav_files)}] {rel}")
 
-        # スキップ判定（--overwrite 未指定で .txt が既にあれば飛ばす）
+        # スキップ判定（--overwrite 未指定で出力が既にあれば飛ばす）
+        # --analyze 指定時は .analysis.json も揃っている場合のみスキップする。
         existing = os.path.join(output_dir, stem + ".txt")
-        if not args.overwrite and os.path.exists(existing):
+        analysis_exists = os.path.exists(os.path.join(output_dir, stem + ".analysis.json"))
+        already_done = os.path.exists(existing) and (not args.analyze or analysis_exists)
+        if not args.overwrite and already_done:
             print("    既に出力があるためスキップ（--overwrite で上書き可）")
             ok += 1
             continue
@@ -205,6 +242,9 @@ def main(argv=None):
         try:
             result = _transcribe_one(path, args.model, args.diarize, args.num_speakers)
             written = _write_outputs(result, output_dir, stem, write_srt=not args.no_srt)
+            if args.analyze:
+                print("    LLMで整形JSONを生成中…")
+                written.append(_analyze_one(result, output_dir, stem))
             dt = time.time() - t0
             print(f"    完了 ({dt:.1f}秒) -> " + ", ".join(os.path.basename(w) for w in written))
             ok += 1

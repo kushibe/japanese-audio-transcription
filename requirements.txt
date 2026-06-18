@@ -5,3 +5,5 @@ requests>=2.31
 speechbrain>=1.0
 scikit-learn>=1.3
 # torch / torchaudio は CPU 版を setup.bat で別途インストールします
+# LLM(Amazon Bedrock)による問い合わせ分析用（boto3 同梱）
+anthropic[bedrock]>=0.40
