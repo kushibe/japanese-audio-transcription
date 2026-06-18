@@ -1,0 +1,3 @@
+# Windows用バッチファイルは改行を CRLF に固定する
+# （LF に変換されると日本語版 Windows の cmd で文字化け・誤動作の原因になる）
+*.bat text eol=crlf
