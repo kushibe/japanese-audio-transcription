@@ -45,13 +45,18 @@ def _find_wav_files(input_dir, recursive):
 
 
 def _progress_printer(label):
-    """同一行を上書きしながら進捗を表示するコールバックを作る。"""
-    state = {"start": time.time()}
+    """同一行を上書きしながら進捗を表示するコールバックを作る。
+
+    返したコールバックには最後に見た音声長 `duration` を `_cb.duration` で
+    保持させ、完了時に100%へ補正できるようにしている。
+    """
+    state = {"start": time.time(), "duration": 0.0}
 
     def _cb(done_or_seg, total_or_processed, duration=None):
         if duration is not None:
             # 文字起こし: on_segment(seg, processed_sec, duration)
             processed = total_or_processed
+            state["duration"] = duration
             if duration > 0:
                 pct = min(processed / duration, 1.0) * 100
                 sys.stdout.write(
@@ -66,7 +71,22 @@ def _progress_printer(label):
                 sys.stdout.write(f"\r    {label}: {pct:5.1f}%  ({done}/{total})")
                 sys.stdout.flush()
 
+    _cb.state = state
     return _cb
+
+
+def _finish_transcribe_line(cb):
+    """文字起こし完了時に進捗行を100%へ補正して確定する。
+
+    VADで末尾の無音が除かれると最後のセグメントの終了時刻が総尺より手前に
+    なり、processed/duration が100%に届かない。完了は確定しているので、
+    総尺を分母・分子の両方に使って100%表示にしてから改行する。
+    """
+    dur = cb.state["duration"]
+    if dur > 0:
+        sys.stdout.write(f"\r    文字起こし: 100.0%  ({dur:6.1f}/{dur:.1f}秒)")
+        sys.stdout.flush()
+    print()  # 進捗行を改行で確定
 
 
 def _transcribe_one(path, model_size, diarize, num_speakers):
@@ -74,18 +94,20 @@ def _transcribe_one(path, model_size, diarize, num_speakers):
     model = core.load_model_with_fallback(model_size)
 
     # --- 文字起こし（GPU失敗時はCPUで再試行） ---
+    cb = _progress_printer("文字起こし")
     try:
         info, seg_list, full_parts = core.transcribe_collect(
-            model, path, on_segment=_progress_printer("文字起こし"))
+            model, path, on_segment=cb)
     except RuntimeError as e:
         if core.is_gpu_error(e):
             print("\n    GPU実行失敗 -> CPUで再試行します。")
             model = core.get_model(model_size, force_cpu=True)
+            cb = _progress_printer("文字起こし")
             info, seg_list, full_parts = core.transcribe_collect(
-                model, path, on_segment=_progress_printer("文字起こし"))
+                model, path, on_segment=cb)
         else:
             raise
-    print()  # 進捗行を改行で確定
+    _finish_transcribe_line(cb)
 
     # --- 話者分離（任意） ---
     num_detected = 0
