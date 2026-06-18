@@ -50,6 +50,29 @@
   }
   .dropzone strong { color: var(--text); }
   .filename { margin-top: 12px; font-weight: 600; color: var(--primary); }
+  .filelist { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .filelist li {
+    display: flex; align-items: center; gap: 10px; font-size: 0.88rem;
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: #fbfdff;
+  }
+  .filelist .fl-name { flex: 1; word-break: break-all; }
+  .filelist .fl-size { color: var(--muted); white-space: nowrap; }
+  .filelist .fl-status { white-space: nowrap; font-weight: 600; }
+  .filelist .fl-status.waiting { color: var(--muted); }
+  .filelist .fl-status.running { color: var(--primary); }
+  .filelist .fl-status.done { color: var(--accent); }
+  .filelist .fl-status.failed { color: #b91c1c; }
+  .filelist .fl-remove { cursor: pointer; color: var(--muted); border: none; background: none; font-size: 1rem; padding: 0 4px; }
+  .filelist .fl-remove:hover { color: #b91c1c; }
+  .results-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .results-list li {
+    display: flex; align-items: center; gap: 10px; font-size: 0.9rem; cursor: pointer;
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; background: #fff;
+  }
+  .results-list li:hover { background: #f3f4f6; }
+  .results-list li.active { border-color: var(--primary); background: #eff6ff; }
+  .results-list .rl-name { flex: 1; word-break: break-all; }
+  .results-list .rl-meta { color: var(--muted); font-size: 0.82rem; white-space: nowrap; }
   .row { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; margin-top: 16px; }
   label.field { font-size: 0.85rem; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
   select, button, input[type=number] {
@@ -127,10 +150,13 @@
   <!-- アップロード -->
   <div class="card">
     <div id="dropzone" class="dropzone">
-      <div>📂 <strong>クリックして .wav ファイルを選択</strong> またはここにドラッグ＆ドロップ</div>
+      <div>📂 <strong>クリックして .wav ファイルを選択</strong>（複数可）またはここにドラッグ＆ドロップ</div>
       <div class="filename" id="filename"></div>
     </div>
-    <input type="file" id="fileInput" accept=".wav,audio/wav" class="hidden">
+    <input type="file" id="fileInput" accept=".wav,audio/wav" multiple class="hidden">
+
+    <!-- 選択ファイル一覧（複数選択時に順次処理） -->
+    <ul class="filelist hidden" id="fileList"></ul>
 
     <div class="row">
       <label class="field">
@@ -177,6 +203,16 @@
     <div class="error hidden" id="errorBox"></div>
   </div>
 
+  <!-- 完了ファイル一覧（複数処理時） -->
+  <div class="card hidden" id="resultsListCard">
+    <div class="meta" id="resultsSummary"></div>
+    <ul class="results-list" id="resultsList"></ul>
+    <div class="download-row">
+      <button class="ghost" id="dlAll">📦 全ファイルの全文をまとめてDL(.txt)</button>
+      <button class="ghost hidden" id="dlAllSpeaker">🗣️ 全ファイルの全文（話者分離）をまとめてDL(.txt)</button>
+    </div>
+  </div>
+
   <!-- 結果 -->
   <div class="card hidden" id="resultCard">
     <div class="meta" id="metaBox"></div>
@@ -216,57 +252,146 @@
   const SPK_COLORS = ['#dbeafe','#dcfce7','#fef9c3','#fce7f3','#ffedd5','#e0e7ff','#ccfbf1','#fee2e2'];
   const SPK_TEXT   = ['#1e40af','#166534','#854d0e','#9d174d','#9a3412','#3730a3','#115e59','#991b1b'];
 
-  let selectedFile = null, lastResult = null, pollTimer = null;
+  const fileList = $('fileList');
+  const resultsListCard = $('resultsListCard'), resultsList = $('resultsList'), resultsSummary = $('resultsSummary');
+
+  let selectedFiles = [], lastResult = null, allResults = [], pollTimer = null, processing = false, queuePrefix = '';
 
   diarizeCheck.addEventListener('change', () => {
     speakerField.style.display = diarizeCheck.checked ? 'flex' : 'none';
   });
 
-  // --- ファイル選択 ---
+  // --- ファイル選択（複数対応） ---
   dropzone.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', () => { if (fileInput.files.length) setFile(fileInput.files[0]); });
+  fileInput.addEventListener('change', () => { addFiles(fileInput.files); fileInput.value = ''; });
   ['dragover','dragenter'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('dragover'); }));
   ['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('dragover'); }));
-  dropzone.addEventListener('drop', e => { if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]); });
+  dropzone.addEventListener('drop', e => { if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
 
-  function setFile(file) {
-    if (!file.name.toLowerCase().endsWith('.wav')) { showError('.wav 形式のファイルを選択してください。'); return; }
-    selectedFile = file;
-    filenameEl.textContent = '選択中: ' + file.name + '（' + (file.size/1048576).toFixed(1) + ' MB）';
-    transcribeBtn.disabled = false;
-    hideError();
+  function addFiles(list) {
+    if (processing) { showError('処理中は新しいファイルを追加できません。完了までお待ちください。'); return; }
+    let skipped = 0;
+    for (const f of list) {
+      if (!f.name.toLowerCase().endsWith('.wav')) { skipped++; continue; }
+      // 同名・同サイズの重複は追加しない
+      if (selectedFiles.some(x => x.name === f.name && x.size === f.size)) continue;
+      selectedFiles.push(f);
+    }
+    if (skipped) showError('.wav 以外のファイルは除外しました（' + skipped + ' 件）。');
+    else hideError();
+    renderFileList();
   }
+
+  function removeFile(i) {
+    if (processing) return;
+    selectedFiles.splice(i, 1);
+    renderFileList();
+  }
+
+  function renderFileList() {
+    transcribeBtn.disabled = processing || selectedFiles.length === 0;
+    if (selectedFiles.length === 0) {
+      fileList.classList.add('hidden'); fileList.innerHTML = '';
+      filenameEl.textContent = ''; transcribeBtn.textContent = '文字起こし開始';
+      return;
+    }
+    filenameEl.textContent = selectedFiles.length + ' 件を選択中';
+    transcribeBtn.textContent = selectedFiles.length > 1
+      ? '文字起こし開始（' + selectedFiles.length + '件）' : '文字起こし開始';
+    fileList.classList.remove('hidden');
+    fileList.innerHTML = '';
+    selectedFiles.forEach((f, i) => {
+      const li = document.createElement('li');
+      li.innerHTML =
+        '<span class="fl-name">' + escapeHtml(f.name) + '</span>' +
+        '<span class="fl-size">' + (f.size/1048576).toFixed(1) + ' MB</span>' +
+        '<span class="fl-status waiting" data-i="' + i + '">待機</span>';
+      const btn = document.createElement('button');
+      btn.className = 'fl-remove'; btn.textContent = '✕'; btn.title = 'リストから削除';
+      btn.addEventListener('click', () => removeFile(i));
+      li.appendChild(btn);
+      fileList.appendChild(li);
+    });
+  }
+
+  function setFileStatus(i, text, cls) {
+    const el = fileList.querySelector('.fl-status[data-i="' + i + '"]');
+    if (el) { el.textContent = text; el.className = 'fl-status ' + cls; }
+  }
+
   function showError(msg) { errorBox.textContent = msg; errorBox.classList.remove('hidden'); }
   function hideError() { errorBox.classList.add('hidden'); }
 
-  // --- 文字起こし開始 ---
+  // --- 文字起こし開始（選択ファイルを順次処理） ---
   transcribeBtn.addEventListener('click', async () => {
-    if (!selectedFile) return;
-    hideError();
-    resultCard.classList.add('hidden');
+    if (processing || selectedFiles.length === 0) return;
+    processing = true;
     transcribeBtn.disabled = true;
-    showProgress(true);
-    setPhase('アップロード中...', true);
-    processedLabel.textContent = ''; elapsedLabel.textContent = ''; percentLabel.textContent = '';
-    liveBox.textContent = ''; liveCount.textContent = ''; liveWrap.classList.remove('show');
+    hideError();
+    allResults = [];
+    resultsList.innerHTML = '';
+    resultsListCard.classList.add('hidden');
+    resultCard.classList.add('hidden');
 
-    const form = new FormData();
-    form.append('file', selectedFile);
-    form.append('model', modelSelect.value);
-    form.append('diarize', diarizeCheck.checked ? 'true' : 'false');
-    if (diarizeCheck.checked && numSpeakers.value) form.append('num_speakers', numSpeakers.value);
+    const files = selectedFiles.slice();
+    const total = files.length;
+    let failures = 0;
 
-    try {
-      const res = await fetch('/transcribe', { method: 'POST', body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
-      poll(data.job_id);
-    } catch (err) {
-      finishWithError('エラー: ' + err.message);
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      queuePrefix = total > 1 ? '(' + (i+1) + '/' + total + ') ' + file.name + ' — ' : '';
+      setFileStatus(i, '処理中…', 'running');
+      showProgress(true);
+      resetProgressUI();
+      try {
+        const result = await transcribeOne(file);
+        result.filename = result.filename || file.name;
+        setFileStatus(i, '完了', 'done');
+        addResult(result);
+      } catch (err) {
+        failures++;
+        setFileStatus(i, '失敗', 'failed');
+        showError('「' + file.name + '」でエラー: ' + err.message);
+      }
+    }
+
+    queuePrefix = '';
+    showProgress(false);
+    processing = false;
+    transcribeBtn.disabled = selectedFiles.length === 0;
+    if (total > 1) {
+      const ok = total - failures;
+      resultsSummary.textContent = '完了 ' + ok + ' 件'
+        + (failures ? ' / 失敗 ' + failures + ' 件' : '') + '。クリックで切り替えできます。';
     }
   });
 
-  function poll(jobId) {
+  function resetProgressUI() {
+    setPhase('アップロード中...', true);
+    processedLabel.textContent = ''; elapsedLabel.textContent = ''; percentLabel.textContent = '';
+    liveBox.textContent = ''; liveCount.textContent = ''; liveWrap.classList.remove('show');
+  }
+
+  // 1ファイルをアップロード→進捗ポーリングし、完了時に結果で解決する Promise を返す
+  function transcribeOne(file) {
+    return new Promise((resolve, reject) => {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('model', modelSelect.value);
+      form.append('diarize', diarizeCheck.checked ? 'true' : 'false');
+      if (diarizeCheck.checked && numSpeakers.value) form.append('num_speakers', numSpeakers.value);
+
+      fetch('/transcribe', { method: 'POST', body: form })
+        .then(res => res.json().then(data => ({ ok: res.ok, status: res.status, data })))
+        .then(({ ok, status, data }) => {
+          if (!ok) throw new Error(data.error || ('HTTP ' + status));
+          pollJob(data.job_id, resolve, reject);
+        })
+        .catch(reject);
+    });
+  }
+
+  function pollJob(jobId, resolve, reject) {
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = setInterval(async () => {
       try {
@@ -274,13 +399,44 @@
         const d = await res.json();
         if (!res.ok) throw new Error(d.error || ('HTTP ' + res.status));
         updateProgress(d);
-        if (d.status === 'done') { clearInterval(pollTimer); pollTimer = null; onDone(d.result); }
-        else if (d.status === 'error') { clearInterval(pollTimer); pollTimer = null; finishWithError('エラー: ' + (d.error || '不明なエラー')); }
+        if (d.status === 'done') { clearInterval(pollTimer); pollTimer = null; resolve(d.result); }
+        else if (d.status === 'error') { clearInterval(pollTimer); pollTimer = null; reject(new Error(d.error || '不明なエラー')); }
       } catch (err) {
         clearInterval(pollTimer); pollTimer = null;
-        finishWithError('進捗の取得に失敗しました: ' + err.message);
+        reject(err);
       }
     }, 500);
+  }
+
+  function addResult(result) {
+    allResults.push(result);
+    renderResultsList();
+    showResultDetail(allResults.length - 1);  // 直近の結果を表示
+  }
+
+  function renderResultsList() {
+    resultsList.innerHTML = '';
+    allResults.forEach((r, i) => {
+      const li = document.createElement('li');
+      li.dataset.i = i;
+      li.innerHTML =
+        '<span class="rl-name">' + escapeHtml(r.filename) + '</span>' +
+        '<span class="rl-meta">' + r.duration + '秒' + (r.diarized ? ' / ' + r.num_speakers + '名' : '') + '</span>';
+      li.addEventListener('click', () => showResultDetail(i));
+      resultsList.appendChild(li);
+    });
+    resultsListCard.classList.toggle('hidden', allResults.length < 2);
+    // 話者分離された結果が1つでもあれば、まとめDLボタンを表示
+    const hasSpeaker = allResults.some(r => r.diarized && r.speaker_text);
+    $('dlAllSpeaker').classList.toggle('hidden', !hasSpeaker);
+  }
+
+  function showResultDetail(i) {
+    const r = allResults[i];
+    if (!r) return;
+    lastResult = r;
+    renderResult(r);
+    resultsList.querySelectorAll('li').forEach(li => li.classList.toggle('active', +li.dataset.i === i));
   }
 
   function updateProgress(d) {
@@ -314,23 +470,11 @@
   }
 
   function setPhase(label, indeterminate) {
-    phaseLabel.textContent = label;
+    phaseLabel.textContent = queuePrefix + label;
     bar.classList.toggle('indeterminate', !!indeterminate);
     if (indeterminate) barFill.style.width = '';
   }
   function showProgress(show) { progressWrap.classList.toggle('show', show); }
-
-  function onDone(data) {
-    lastResult = data;
-    showProgress(false);
-    transcribeBtn.disabled = false;
-    renderResult(data);
-  }
-  function finishWithError(msg) {
-    showProgress(false);
-    transcribeBtn.disabled = false;
-    showError(msg);
-  }
 
   function renderResult(data) {
     let meta =
@@ -386,6 +530,18 @@
   $('copyBtn').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(resultText.value); alert('全文をコピーしました。'); }
     catch { alert('コピーに失敗しました。'); }
+  });
+  $('dlAll').addEventListener('click', () => {
+    if (!allResults.length) return;
+    const parts = allResults.map(r => '==== ' + r.filename + ' ====\n' + r.text + '\n');
+    download('全文まとめ.txt', parts.join('\n'), 'text/plain');
+  });
+  $('dlAllSpeaker').addEventListener('click', () => {
+    // 話者分離された結果のみを対象にまとめる
+    const targets = allResults.filter(r => r.diarized && r.speaker_text);
+    if (!targets.length) return;
+    const parts = targets.map(r => '==== ' + r.filename + ' ====\n' + r.speaker_text + '\n');
+    download('全文まとめ_話者分離.txt', parts.join('\n'), 'text/plain');
   });
 
   function baseName() {

@@ -7,6 +7,8 @@
 
 - 日本語の高精度文字起こし（Whisper large-v3）
 - **進捗バーと、文字起こしのリアルタイム途中経過表示**
+- **複数ファイルの一括処理**（GUI で複数 `.wav` を選択し、順番に文字起こし）
+- **CLI モードのバッチ処理**（`INPUT` フォルダ内の `.wav` をまとめて文字起こし）
 - **話者分離**（誰が話したかを推定し、話者ごとにラベル付け）
 - 結果の画面表示（全文 / タイムスタンプ付き / 話者別）
 - ダウンロード（テキスト `.txt` / 話者分離テキスト `.txt` / 字幕 `.srt`）
@@ -47,11 +49,55 @@
 `start.bat` をダブルクリックします。自動的に既定ブラウザで
 `http://127.0.0.1:5000` が開きます。
 
-1. `.wav` ファイルをドラッグ＆ドロップ（またはクリックで選択）
+1. `.wav` ファイルをドラッグ＆ドロップ（またはクリックで選択）。**複数ファイルをまとめて選択でき、順番に処理されます**
 2. モデルを選択（既定: large-v3＝最高精度）
 3. 必要なら「**話者分離を行う**」にチェック（話者の人数が分かれば入力、空欄なら自動推定）
 4. 「文字起こし開始」をクリック → **進捗バーと途中経過**が表示されます
 5. 結果を画面で確認し、**テキスト / 話者分離テキスト / 字幕(.srt)** でダウンロード
+
+> 複数ファイルを選択した場合は、選択一覧に各ファイルの進行状況（待機 / 処理中 / 完了 / 失敗）が表示され、
+> 上から順に1ファイルずつ処理されます。完了後は結果一覧から各ファイルの結果を切り替えて確認でき、
+> 「**全ファイルの全文をまとめてDL**」で全結果を1つのテキストにまとめて保存できます。
+
+## CLI モード（フォルダ一括処理）
+
+GUI を使わず、**フォルダ内の `.wav` をまとめて文字起こし**するモードです。
+大量のファイルを夜間に処理したいときなどに便利です。
+
+`transcribe_folder.bat` をダブルクリックすると、`INPUT` フォルダ内の `.wav` を順番に
+文字起こしし、結果を `OUTPUT` フォルダに書き出します（`INPUT` フォルダが無ければ自動作成します）。
+**このバッチは既定で話者分離つき（`--diarize`）で実行し、字幕(.srt)は出力しません（`--no-srt`）。**
+（話者の人数は自動推定）。人数が分かっている場合は `transcribe_folder.bat --num-speakers 2` のように
+指定でき、話者分離が不要な場合や字幕(.srt)も欲しい場合は後述の `cli.py` を直接実行してください。
+
+コマンドラインから直接実行する場合は次のとおりです。
+
+```bat
+venv\Scripts\python.exe cli.py                    rem INPUT 配下の .wav を OUTPUT へ
+venv\Scripts\python.exe cli.py --diarize          rem 話者分離つき
+venv\Scripts\python.exe cli.py -i 録音 -o 結果 -m medium
+venv\Scripts\python.exe cli.py --recursive        rem サブフォルダも対象にする
+```
+
+`transcribe_folder.bat` に渡した引数はそのまま `cli.py` へ渡されます
+（例: `transcribe_folder.bat --diarize --model medium`）。
+
+| オプション | 既定 | 説明 |
+|------------|------|------|
+| `-i, --input` | `INPUT` | 入力フォルダ |
+| `-o, --output` | `OUTPUT` | 出力フォルダ |
+| `-m, --model` | `large-v3` | Whisper モデル |
+| `--diarize` | （無効） | 話者分離を行う |
+| `--num-speakers` | 自動推定 | 話者の人数を指定 |
+| `-r, --recursive` | （無効） | サブフォルダ内の `.wav` も対象にする |
+| `--overwrite` | （無効） | 既に出力がある場合も上書き（既定はスキップ） |
+| `--no-srt` | （無効） | 字幕(.srt)を出力しない |
+
+出力ファイル（入力ファイル名を基準）:
+
+- `<名前>.txt` … 全文テキスト
+- `<名前>.srt` … 字幕（タイムスタンプ付き）
+- `<名前>.speakers.txt` … 話者別テキスト（`--diarize` 指定時のみ）
 
 > **初回実行時**は選択したモデル（large-v3 は約 3GB、話者分離モデルは約 80MB）が
 > 自動ダウンロードされます。2 回目以降はキャッシュされ高速に起動します。
@@ -92,11 +138,14 @@ CPU のみの環境で長い音声を large-v3 で処理すると時間がかか
 
 ```
 音声文字起こし/
-├─ app.py            … Flask バックエンド（ジョブ管理・文字起こし・進捗API）
-├─ diarization.py    … 話者分離（SpeechBrain + scikit-learn）
-├─ index.html        … GUI（HTML / JavaScript）
-├─ requirements.txt  … 依存ライブラリ
-├─ setup.bat         … 初回セットアップ
-├─ start.bat         … 起動
+├─ app.py                … Flask バックエンド（ジョブ管理・進捗API）
+├─ transcribe_core.py    … 文字起こしの共通コア（GUI / CLI から利用）
+├─ cli.py                … CLI モード（フォルダ一括処理）
+├─ diarization.py        … 話者分離（SpeechBrain + scikit-learn）
+├─ index.html            … GUI（HTML / JavaScript）
+├─ requirements.txt      … 依存ライブラリ
+├─ setup.bat             … 初回セットアップ
+├─ start.bat             … GUI 起動
+├─ transcribe_folder.bat … CLI モード起動（INPUT → OUTPUT）
 └─ README.md
 ```
