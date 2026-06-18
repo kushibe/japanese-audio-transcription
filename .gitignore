@@ -1,0 +1,19 @@
+# Python 仮想環境（巨大・各自で再生成）
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# 自動ダウンロードされるモデル（初回実行時に取得される）
+models/
+
+# Claude Code などのローカル設定
+.claude/
+
+# 音声・出力ファイル（個人情報を含む可能性があるため公開しない）
+*.wav
+*.srt
+INPUT/
+OUTPUT/
+_*.txt
+server.log

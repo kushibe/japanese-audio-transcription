@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日本語 音声文字起こしツール</title>
+<style>
+  :root {
+    --bg: #f4f6f9;
+    --card: #ffffff;
+    --primary: #2563eb;
+    --primary-dark: #1d4ed8;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent: #10b981;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 24px;
+    line-height: 1.6;
+  }
+  .container { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 20px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 36px 20px;
+    text-align: center;
+    color: var(--muted);
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+  }
+  .dropzone:hover, .dropzone.dragover {
+    border-color: var(--primary);
+    background: #eff6ff;
+  }
+  .dropzone strong { color: var(--text); }
+  .filename { margin-top: 12px; font-weight: 600; color: var(--primary); }
+  .row { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; margin-top: 16px; }
+  label.field { font-size: 0.85rem; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+  select, button, input[type=number] {
+    font-size: 0.95rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    background: #fff;
+  }
+  input[type=number] { width: 90px; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; cursor: pointer; user-select: none; }
+  .check input { width: 16px; height: 16px; }
+  button.primary {
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    padding: 10px 22px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.primary:hover { background: var(--primary-dark); }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  button.ghost { background: #fff; cursor: pointer; }
+  button.ghost:hover { background: #f3f4f6; }
+
+  /* 進捗 */
+  .progress-wrap { display: none; margin-top: 20px; }
+  .progress-wrap.show { display: block; }
+  .progress-head { display: flex; justify-content: space-between; font-size: 0.9rem; margin-bottom: 6px; }
+  .phase { font-weight: 600; color: var(--primary); }
+  .bar { width: 100%; height: 12px; background: var(--border); border-radius: 999px; overflow: hidden; }
+  .bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2563eb, #10b981); transition: width .4s ease; }
+  .bar.indeterminate .bar-fill {
+    width: 35% !important;
+    animation: slide 1.2s ease-in-out infinite;
+  }
+  @keyframes slide { 0%{margin-left:-35%;} 100%{margin-left:100%;} }
+  .progress-meta { display: flex; gap: 18px; margin-top: 8px; font-size: 0.85rem; color: var(--muted); flex-wrap: wrap; }
+  .live-wrap { display: none; margin-top: 14px; }
+  .live-wrap.show { display: block; }
+  .live-head { font-size: 0.82rem; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
+  .live-box {
+    max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; background: #fbfdff; font-size: 0.92rem; line-height: 1.7;
+    white-space: pre-wrap; word-break: break-word; color: #374151;
+  }
+  .live-box:empty::before { content: "発話を検出するとここに表示されます…"; color: #9ca3af; }
+  .live-cursor { display:inline-block; width:8px; background:var(--accent); animation: blink 1s step-start infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .meta { font-size: 0.82rem; color: var(--muted); margin-bottom: 12px; }
+  .meta span { margin-right: 16px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .tab { padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.88rem; border: 1px solid var(--border); background: #fff; }
+  .tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  textarea {
+    width: 100%; min-height: 300px; border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; font-size: 0.95rem; font-family: inherit; resize: vertical; line-height: 1.8;
+  }
+  .seg-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+  .seg-table th, .seg-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .seg-table th { color: var(--muted); font-weight: 600; }
+  .ts { color: var(--accent); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .spk { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+  .download-row { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  .hidden { display: none; }
+  .error { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; padding: 12px; border-radius: 8px; margin-top: 12px; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🎙️ 日本語 音声文字起こしツール</h1>
+  <div class="subtitle">ローカル環境で動作（Whisper / faster-whisper ＋ SpeechBrain 話者分離）。音声はこのPC内でのみ処理され、外部に送信されません。</div>
+
+  <!-- アップロード -->
+  <div class="card">
+    <div id="dropzone" class="dropzone">
+      <div>📂 <strong>クリックして .wav ファイルを選択</strong> またはここにドラッグ＆ドロップ</div>
+      <div class="filename" id="filename"></div>
+    </div>
+    <input type="file" id="fileInput" accept=".wav,audio/wav" class="hidden">
+
+    <div class="row">
+      <label class="field">
+        モデル（精度 / 速度）
+        <select id="modelSelect">
+          <option value="large-v3" selected>large-v3（最高精度・推奨）</option>
+          <option value="medium">medium（バランス）</option>
+          <option value="small">small（高速）</option>
+        </select>
+      </label>
+
+      <label class="check" title="誰が話したかを推定し、話者ごとにラベル付けします">
+        <input type="checkbox" id="diarizeCheck">
+        話者分離を行う
+      </label>
+
+      <label class="field" id="speakerField" style="display:none;">
+        話者の人数
+        <input type="number" id="numSpeakers" min="1" max="20" placeholder="自動">
+      </label>
+
+      <button class="primary" id="transcribeBtn" disabled>文字起こし開始</button>
+    </div>
+
+    <!-- 進捗バー -->
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-head">
+        <span class="phase" id="phaseLabel">準備中...</span>
+        <span id="percentLabel"></span>
+      </div>
+      <div class="bar" id="bar"><div class="bar-fill" id="barFill"></div></div>
+      <div class="progress-meta">
+        <span id="processedLabel"></span>
+        <span id="elapsedLabel"></span>
+      </div>
+
+      <!-- 文字起こしの途中経過（リアルタイム） -->
+      <div class="live-wrap" id="liveWrap">
+        <div class="live-head">📝 文字起こし（リアルタイム） <span id="liveCount"></span></div>
+        <div class="live-box" id="liveBox"></div>
+      </div>
+    </div>
+
+    <div class="error hidden" id="errorBox"></div>
+  </div>
+
+  <!-- 結果 -->
+  <div class="card hidden" id="resultCard">
+    <div class="meta" id="metaBox"></div>
+    <div class="tabs" id="tabs">
+      <div class="tab active" data-tab="text">全文</div>
+      <div class="tab" data-tab="segments">タイムスタンプ付き</div>
+    </div>
+
+    <div id="tabText"><textarea id="resultText" spellcheck="false"></textarea></div>
+    <div id="tabSegments" class="hidden">
+      <table class="seg-table">
+        <thead><tr><th style="width:150px;">時間</th><th id="spkHead" class="hidden" style="width:90px;">話者</th><th>テキスト</th></tr></thead>
+        <tbody id="segBody"></tbody>
+      </table>
+    </div>
+
+    <div class="download-row">
+      <button class="ghost" id="dlTxt">📄 テキスト(.txt)</button>
+      <button class="ghost hidden" id="dlSpeaker">🗣️ 話者分離テキスト(.txt)</button>
+      <button class="ghost" id="copyBtn">📋 全文をコピー</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const fileInput = $('fileInput'), dropzone = $('dropzone'), filenameEl = $('filename');
+  const transcribeBtn = $('transcribeBtn'), modelSelect = $('modelSelect');
+  const diarizeCheck = $('diarizeCheck'), speakerField = $('speakerField'), numSpeakers = $('numSpeakers');
+  const errorBox = $('errorBox'), resultCard = $('resultCard'), metaBox = $('metaBox');
+  const resultText = $('resultText'), segBody = $('segBody');
+  const progressWrap = $('progressWrap'), phaseLabel = $('phaseLabel'), percentLabel = $('percentLabel');
+  const bar = $('bar'), barFill = $('barFill');
+  const processedLabel = $('processedLabel'), elapsedLabel = $('elapsedLabel');
+  const liveWrap = $('liveWrap'), liveBox = $('liveBox'), liveCount = $('liveCount');
+
+  const SPK_COLORS = ['#dbeafe','#dcfce7','#fef9c3','#fce7f3','#ffedd5','#e0e7ff','#ccfbf1','#fee2e2'];
+  const SPK_TEXT   = ['#1e40af','#166534','#854d0e','#9d174d','#9a3412','#3730a3','#115e59','#991b1b'];
+
+  let selectedFile = null, lastResult = null, pollTimer = null;
+
+  diarizeCheck.addEventListener('change', () => {
+    speakerField.style.display = diarizeCheck.checked ? 'flex' : 'none';
+  });
+
+  // --- ファイル選択 ---
+  dropzone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => { if (fileInput.files.length) setFile(fileInput.files[0]); });
+  ['dragover','dragenter'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.add('dragover'); }));
+  ['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, e => { e.preventDefault(); dropzone.classList.remove('dragover'); }));
+  dropzone.addEventListener('drop', e => { if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]); });
+
+  function setFile(file) {
+    if (!file.name.toLowerCase().endsWith('.wav')) { showError('.wav 形式のファイルを選択してください。'); return; }
+    selectedFile = file;
+    filenameEl.textContent = '選択中: ' + file.name + '（' + (file.size/1048576).toFixed(1) + ' MB）';
+    transcribeBtn.disabled = false;
+    hideError();
+  }
+  function showError(msg) { errorBox.textContent = msg; errorBox.classList.remove('hidden'); }
+  function hideError() { errorBox.classList.add('hidden'); }
+
+  // --- 文字起こし開始 ---
+  transcribeBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    hideError();
+    resultCard.classList.add('hidden');
+    transcribeBtn.disabled = true;
+    showProgress(true);
+    setPhase('アップロード中...', true);
+    processedLabel.textContent = ''; elapsedLabel.textContent = ''; percentLabel.textContent = '';
+    liveBox.textContent = ''; liveCount.textContent = ''; liveWrap.classList.remove('show');
+
+    const form = new FormData();
+    form.append('file', selectedFile);
+    form.append('model', modelSelect.value);
+    form.append('diarize', diarizeCheck.checked ? 'true' : 'false');
+    if (diarizeCheck.checked && numSpeakers.value) form.append('num_speakers', numSpeakers.value);
+
+    try {
+      const res = await fetch('/transcribe', { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+      poll(data.job_id);
+    } catch (err) {
+      finishWithError('エラー: ' + err.message);
+    }
+  });
+
+  function poll(jobId) {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      try {
+        const res = await fetch('/progress/' + jobId);
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || ('HTTP ' + res.status));
+        updateProgress(d);
+        if (d.status === 'done') { clearInterval(pollTimer); pollTimer = null; onDone(d.result); }
+        else if (d.status === 'error') { clearInterval(pollTimer); pollTimer = null; finishWithError('エラー: ' + (d.error || '不明なエラー')); }
+      } catch (err) {
+        clearInterval(pollTimer); pollTimer = null;
+        finishWithError('進捗の取得に失敗しました: ' + err.message);
+      }
+    }, 500);
+  }
+
+  function updateProgress(d) {
+    const indeterminate = (d.status === 'loading_model' || d.status === 'queued');
+    setPhase(d.phase_label || '処理中...', indeterminate);
+    if (!indeterminate) {
+      const pct = Math.round((d.progress || 0) * 100);
+      percentLabel.textContent = pct + '%';
+      barFill.style.width = pct + '%';
+    } else {
+      percentLabel.textContent = '';
+    }
+
+    if (d.status === 'transcribing' && d.duration) {
+      processedLabel.textContent = '処理位置: ' + fmt(d.processed_sec) + ' / ' + fmt(d.duration);
+    } else if (d.status === 'diarizing') {
+      processedLabel.textContent = '話者を解析しています';
+    } else {
+      processedLabel.textContent = '';
+    }
+    elapsedLabel.textContent = d.elapsed ? '経過: ' + d.elapsed + ' 秒' : '';
+
+    // 文字起こしの途中経過をリアルタイム表示
+    if (d.partial_text) {
+      const atBottom = liveBox.scrollHeight - liveBox.scrollTop - liveBox.clientHeight < 40;
+      liveBox.innerHTML = escapeHtml(d.partial_text) + '<span class="live-cursor">&nbsp;</span>';
+      liveCount.textContent = d.partial_count ? '（' + d.partial_count + ' 区間）' : '';
+      liveWrap.classList.add('show');
+      if (atBottom) liveBox.scrollTop = liveBox.scrollHeight;  // 末尾追従
+    }
+  }
+
+  function setPhase(label, indeterminate) {
+    phaseLabel.textContent = label;
+    bar.classList.toggle('indeterminate', !!indeterminate);
+    if (indeterminate) barFill.style.width = '';
+  }
+  function showProgress(show) { progressWrap.classList.toggle('show', show); }
+
+  function onDone(data) {
+    lastResult = data;
+    showProgress(false);
+    transcribeBtn.disabled = false;
+    renderResult(data);
+  }
+  function finishWithError(msg) {
+    showProgress(false);
+    transcribeBtn.disabled = false;
+    showError(msg);
+  }
+
+  function renderResult(data) {
+    let meta =
+      '<span>ファイル: ' + escapeHtml(data.filename) + '</span>' +
+      '<span>言語: ' + data.language + '（確度 ' + (data.language_probability*100).toFixed(1) + '%）</span>' +
+      '<span>長さ: ' + data.duration + ' 秒</span>' +
+      '<span>モデル: ' + data.model + '</span>';
+    if (data.diarized) meta += '<span>話者数: ' + data.num_speakers + ' 名</span>';
+    metaBox.innerHTML = meta;
+
+    resultText.value = data.text;
+
+    // 話者分離: タイムスタンプ表に話者列を出し、話者分離テキストのDLを有効化
+    const dlSpeaker = $('dlSpeaker'), spkHead = $('spkHead');
+    if (data.diarized) {
+      dlSpeaker.classList.remove('hidden');
+      spkHead.classList.remove('hidden');
+    } else {
+      dlSpeaker.classList.add('hidden');
+      spkHead.classList.add('hidden');
+    }
+
+    // セグメント表
+    segBody.innerHTML = '';
+    data.segments.forEach(seg => {
+      const tr = document.createElement('tr');
+      let html = '<td class="ts">' + fmt(seg.start) + ' → ' + fmt(seg.end) + '</td>';
+      if (data.diarized) {
+        const idx = (seg.speaker - 1) % SPK_COLORS.length;
+        html += '<td><span class="spk" style="background:' + SPK_COLORS[idx] + ';color:' + SPK_TEXT[idx] + '">話者' + seg.speaker + '</span></td>';
+      }
+      html += '<td>' + escapeHtml(seg.text) + '</td>';
+      tr.innerHTML = html;
+      segBody.appendChild(tr);
+    });
+
+    // タブを全文に戻す
+    activateTab('text');
+    resultCard.classList.remove('hidden');
+  }
+
+  // --- タブ切替 ---
+  document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => activateTab(tab.dataset.tab)));
+  function activateTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    $('tabText').classList.toggle('hidden', name !== 'text');
+    $('tabSegments').classList.toggle('hidden', name !== 'segments');
+  }
+
+  // --- ダウンロード ---
+  $('dlTxt').addEventListener('click', () => { if (lastResult) download(baseName()+'.txt', resultText.value, 'text/plain'); });
+  $('dlSpeaker').addEventListener('click', () => { if (lastResult) download(baseName()+'_話者分離.txt', lastResult.speaker_text || '', 'text/plain'); });
+  $('copyBtn').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(resultText.value); alert('全文をコピーしました。'); }
+    catch { alert('コピーに失敗しました。'); }
+  });
+
+  function baseName() {
+    const n = lastResult ? lastResult.filename : 'transcript';
+    return n.replace(/\.[^.]+$/, '') || 'transcript';
+  }
+  function download(name, content, mime) {
+    const blob = new Blob([content], { type: mime + ';charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+  function fmt(sec) {
+    sec = sec || 0;
+    const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = Math.floor(sec%60);
+    const pad = n => String(n).padStart(2,'0');
+    return (h>0 ? pad(h)+':' : '') + pad(m) + ':' + pad(s);
+  }
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+</script>
+</body>
+</html>
