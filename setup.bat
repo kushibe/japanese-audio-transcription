@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 cd /d "%~dp0"
 echo ============================================
@@ -6,10 +6,10 @@ echo  音声文字起こしツール  初回セットアップ
 echo ============================================
 echo.
 
-rem venv の状態を確認して分岐する。
-rem ・venv が無い → 新規作成
-rem ・venv はあるが pip が使えない → 不完全なので作り直す
-rem ・venv があり pip も使える → 再利用（PyTorch 等の再ダウンロードを避ける）
+rem Decide what to do with venv:
+rem   - no venv               -> create
+rem   - venv but pip unusable -> broken, recreate
+rem   - venv and pip OK        -> reuse (avoid re-downloading PyTorch etc.)
 if not exist "venv\Scripts\python.exe" goto create
 call venv\Scripts\python.exe -m pip --version >nul 2>&1
 if errorlevel 1 goto recreate
@@ -27,7 +27,7 @@ echo [1/4] 仮想環境を作成します...
 :makevenv
 python -m venv venv
 if errorlevel 1 goto err_venv
-rem venv 内に pip が無い場合に備えて ensurepip で確実に用意する。
+rem Make sure pip exists inside the venv.
 call venv\Scripts\python.exe -m ensurepip --upgrade
 
 :pipupgrade
