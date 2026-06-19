@@ -35,8 +35,10 @@ DEFAULT_BEDROCK_CONFIG = {
     "aws_session_token": "",
     "aws_region": "ap-northeast-1",
     # Bedrock 上のモデルID（推論プロファイルID）。利用するアカウント/リージョンに
-    # 合わせて変更すること。例: us.anthropic.claude-sonnet-4-5-20250929-v1:0
-    "model_id": "apac.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    # 合わせて変更すること。Claude 4.5 世代は APAC(apac.) プロファイルが無い
+    # リージョン/アカウントが多いため、既定はグローバル(global.)プロファイルとする。
+    # 例: us.anthropic.claude-sonnet-4-5-20250929-v1:0
+    "model_id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
     "max_tokens": 4096,
 }
 
